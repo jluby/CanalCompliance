@@ -14,7 +14,7 @@ library(sp)
 library(data.table)
 library(shinyWidgets)
 
-vessel_data <- read_rds("vessels")
+vessel_data <- read_rds("vessels.rds")
 
 # Define UI
 ui <- fluidPage(

@@ -1,0 +1,74 @@
+---
+title: "Gulf of Panama Vessel Data"
+author: "Jack Luby"
+date: "11/2/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Loading in necessary libraries
+knitr::opts_chunk$set(echo = FALSE)
+library(readr)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(janitor)
+library(tidyverse)
+# Read in data
+vessel_data <- read_csv("5min-vessels-movements-report.csv") %>% 
+  clean_names()
+```
+
+```{r}
+# Create a "day" variable, taking the date from the date_time_utc column
+vessel_data <- vessel_data %>%
+  ungroup() %>% 
+  mutate(day = substr(vessel_data$date_time_utc, start = 1, stop = 10))
+
+# Create a "trip" variable, to single out individual trips by each ship
+# Covert day to a date
+# Create an "era" variable to signify trips before or after the implementation of the TSS
+# Create a vessel_type variable by simplifying the "aistype" variable given in the data
+vessel_data <- vessel_data %>% 
+  mutate(trip = group_indices_(vessel_data, .dots=c("mmsi", "day"))) %>% 
+  mutate(day = as.Date(day)) %>% 
+  mutate(era = case_when(day < as.Date("2014-12-01") ~ "Pre-TSS",
+                         day >= as.Date("2014-12-01") ~ "Post-TSS")) %>% 
+  mutate(vessel_type = str_sub(aistype, 1, 1))
+
+# Filter out trips which never went below longitude 8.2 ("trips" where ships were largely just
+# stopped in harbor waiting to pass through gulf)
+# Filter out flawed trip
+vessel_data <- vessel_data %>% 
+  group_by(trip) %>% 
+  mutate(min = min(latitude)) %>% 
+  filter(min < 8.2) %>% 
+  filter(trip != 17278)
+
+# Create a variable to check if an observation occurred within the middle part of the pre-canal
+# TSS area.
+vessel_data <- vessel_data %>% 
+  mutate(clean_check = case_when(latitude > 8.2 ~ 0,
+                                 latitude < 8.2 & latitude > 7.75 ~ 1,
+                                 latitude < 7.75 ~ 0))
+
+# Create a "clean" varialbe to signify if a TRIP had any observations in that range. Many trips
+# only contained observations at the mouth of the canal and at the outer bound of the gulf, so
+# in a straight track representation the track "claims" that the ship went on a straight line
+# from mouth to gulf corner which we know is not the case. We will add the option to filter out
+# those trips in the app.
+vessel_data <- vessel_data %>% 
+  group_by(trip) %>% 
+  mutate(clean = max(clean_check))
+
+vessel_data <- vessel_data %>% 
+  select(trip, latitude, longitude, speed, vessel_type, draught, date_time_utc, day, era, clean)
+```
+
+```{r}
+# Write an rds file containing the revised information for use in the app.
+write_rds(vessel_data, "vessels.rds")
+```
