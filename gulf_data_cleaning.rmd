@@ -18,54 +18,95 @@ library(ggplot2)
 library(janitor)
 library(tidyverse)
 # Read in data
+# Clean names to make variables easier to work with
 vessel_data <- read_csv("5min-vessels-movements-report.csv") %>% 
   clean_names()
 ```
 
 ```{r}
 # Create a "day" variable, taking the date from the date_time_utc column
+# Create a "month" variable for two reasons: (1) To make it possible to sort
+# out months with speed regulation and (2) To clarify trips by time.
+# Create variables for quarters of the month to sort trips by time. Previously
+# was done by "day" but a lot of trips which happened through midnight were split.
+# This method fixes that problem somewhat.
+# Create a "direction" variable to be able to have wider time spans without having
+# turnaround trips be considered one trip.
 vessel_data <- vessel_data %>%
   ungroup() %>% 
-  mutate(day = substr(vessel_data$date_time_utc, start = 1, stop = 10))
+  mutate(day = substr(vessel_data$date_time_utc, start = 1, stop = 10)) %>% 
+  mutate(month = substr(vessel_data$date_time_utc, 1, 7)) %>% 
+  mutate(month_half = case_when(between(as.numeric(str_sub(day, 9, 10)), 1, 8) ~ "first",
+                                between(as.numeric(str_sub(day, 9, 10)), 9, 16) ~ "second",
+                                between(as.numeric(str_sub(day, 9, 10)), 17, 24) ~ "third",
+                                between(as.numeric(str_sub(day, 9, 10)), 25, 31) ~ "fourth")) %>%
+  mutate(direction = case_when(between(heading, 0, 90) ~ "North",
+                                      between(heading, 271, 360) ~ "North",
+                                      between(heading, 91, 270) ~ "South"))
 
-# Create a "trip" variable, to single out individual trips by each ship
-# Covert day to a date
+# Create a "trip" variable, to single out individual trips by each ship. Logic behind
+# using each of the "group_indices_" is described above.
+# Covert day to a date for use in the case_when to clarify Pre- and Post- TSS eras.
 # Create an "era" variable to signify trips before or after the implementation of the TSS
-# Create a vessel_type variable by simplifying the "aistype" variable given in the data
+# Create a vessel_type variable by simplifying the "aistype" variable given in the data.
+# The "aistype" variable given had additional details about cargo that we don't care about.
 vessel_data <- vessel_data %>% 
-  mutate(trip = group_indices_(vessel_data, .dots=c("mmsi", "day"))) %>% 
+  mutate(trip = group_indices_(vessel_data, .dots=c("mmsi", "month", "month_half", "direction"))) %>% 
   mutate(day = as.Date(day)) %>% 
   mutate(era = case_when(day < as.Date("2014-12-01") ~ "Pre-TSS",
                          day >= as.Date("2014-12-01") ~ "Post-TSS")) %>% 
   mutate(vessel_type = str_sub(aistype, 1, 1))
 
-# Filter out trips which never went below longitude 8.2 ("trips" where ships were largely just
+# Filter out trips which never went below latitude 8 ("trips" where ships were largely just
 # stopped in harbor waiting to pass through gulf)
-# Filter out flawed trip
+# Filter out trips where ships never went above latitude 7.5 (this basically just clears out
+# one clearly flawed trip that showed up in the data.)
+# Filter out flawed distortionary outlier where speed was more than 100 knots.
 vessel_data <- vessel_data %>% 
   group_by(trip) %>% 
   mutate(min = min(latitude)) %>% 
-  filter(min < 8.2) %>% 
-  filter(trip != 17278)
+  filter(min < 7.5) %>% 
+  mutate(max = max(latitude)) %>% 
+  filter(max > 8) %>% 
+  filter(speed < 100)
+
+# Create a latitude group variable for use in our plot in the app. We want to
+# group together these latitude groups so that we can create summary statistics.
+vessel_data <- vessel_data %>% 
+  mutate(lat_group = case_when(between(latitude, 7.4, 7.6) ~ "7.4-7.6",
+                               between(latitude, 7.6, 7.8) ~ "7.6-7.8",
+                               between(latitude, 7.8, 8.0) ~ "7.8-8.0",
+                               between(latitude, 8.0, 8.2) ~ "8.0-8.2",
+                               between(latitude, 8.2, 8.4) ~ "8.2-8.4",
+                               between(latitude, 8.4, 8.6) ~ "8.4-8.6",
+                               between(latitude, 8.6, 8.8) ~ "8.6-8.8"))
 
 # Create a variable to check if an observation occurred within the middle part of the pre-canal
-# TSS area.
+# TSS area. This helps to make sure that the tracks we are displaying are accurate geographically,
+# which is really what we care about first of all. We will make this an optional attribute so that
+# speed analyses can still be done considering inaccurate points.
 vessel_data <- vessel_data %>% 
-  mutate(clean_check = case_when(latitude > 8.2 ~ 0,
-                                 latitude < 8.2 & latitude > 7.75 ~ 1,
-                                 latitude < 7.75 ~ 0))
+  mutate(clean_check1 = case_when(latitude > 7.85 ~ 0,
+                                 latitude < 7.85 & latitude > 7.75 ~ 1,
+                                 latitude < 7.75 ~ 0)) %>% 
+    mutate(clean_check2 = case_when(latitude > 8.58333333 ~ 0,
+                                 latitude < 8.58333333 & latitude > 8.48333333 ~ 1,
+                                 latitude < 8.48333333 ~ 0)) 
 
-# Create a "clean" varialbe to signify if a TRIP had any observations in that range. Many trips
+# Create a "clean" variable to signify if a TRIP had any observations in that range. Many trips
 # only contained observations at the mouth of the canal and at the outer bound of the gulf, so
 # in a straight track representation the track "claims" that the ship went on a straight line
 # from mouth to gulf corner which we know is not the case. We will add the option to filter out
 # those trips in the app.
 vessel_data <- vessel_data %>% 
   group_by(trip) %>% 
-  mutate(clean = max(clean_check))
+  mutate(clean1 = max(clean_check1)) %>% 
+  mutate(clean2 = max(clean_check2)) %>% 
+  mutate(clean = clean1 + clean2)
 
+# Select only variables we need so that Nick and Albert don't steal my data.
 vessel_data <- vessel_data %>% 
-  select(trip, latitude, longitude, speed, vessel_type, draught, date_time_utc, day, era, clean)
+  select(trip, latitude, longitude, speed, vessel_type, draught, date_time_utc, day, era, clean, direction, lat_group)
 ```
 
 ```{r}
