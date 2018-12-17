@@ -159,7 +159,7 @@ ui <- fluidPage(
                                                         div(class = "form-group shiny-input-container", icon("info-sign", lib = "glyphicon") %>%
                                                               bs_embed_popover(title = "Track Aesthetics",
                                                                                content = paste("'Data Points' checkbox: Toggle visual representation of individual data points. Helpful in viewing geographic distribution of data.", 
-                                                                                               "'Speeding Points' checkbox: Toggle visual representations of observations whose speed exceeded the 10 knot limit between August 1st and November 30th, for tracks before and after implementation of the regulations (for comparison).", 
+                                                                                               "'Speeding Points' checkbox: Toggle visual representations of observations whose speed exceeded the 10 knot limit above 8ºN between August 1st and November 30th, for tracks before and after implementation of the regulations (for comparison).", 
                                                                                                sep = "\n\n"), 
                                                                                placement = "left")))),
                                         
